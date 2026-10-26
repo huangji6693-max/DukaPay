@@ -564,12 +564,22 @@ impl MockRegistry {
             .set(&Symbol::new(&env, "status"), &status);
     }
 
-    pub fn get_agent(env: Env, _agent: Address) -> Result<crate::AgentInfo, crate::RegistryError> {
-        let status: Option<crate::AgentStatus> = env
-            .storage()
+    pub fn set_agent_status(env: Env, agent: Address, status: Option<crate::AgentStatus>) {
+        env.storage()
             .instance()
-            .get(&Symbol::new(&env, "status"))
-            .unwrap();
+            .set(&(Symbol::new(&env, "agent"), agent), &status);
+    }
+
+    pub fn get_agent(env: Env, agent: Address) -> Result<crate::AgentInfo, crate::RegistryError> {
+        let override_key = (Symbol::new(&env, "agent"), agent);
+        let status: Option<crate::AgentStatus> = if env.storage().instance().has(&override_key) {
+            env.storage().instance().get(&override_key).unwrap()
+        } else {
+            env.storage()
+                .instance()
+                .get(&Symbol::new(&env, "status"))
+                .unwrap()
+        };
         status
             .map(|status| crate::AgentInfo {
                 status,
@@ -585,6 +595,17 @@ impl MockRegistry {
 
 fn mock_registry(env: &Env, status: Option<crate::AgentStatus>) -> Address {
     env.register(MockRegistry, (status,))
+}
+
+fn mock_registry_with_agent(
+    env: &Env,
+    default_status: Option<crate::AgentStatus>,
+    target: &Address,
+    target_status: Option<crate::AgentStatus>,
+) -> Address {
+    let reg = env.register(MockRegistry, (default_status,));
+    MockRegistryClient::new(env, &reg).set_agent_status(target, &target_status);
+    reg
 }
 
 #[test]
@@ -631,11 +652,28 @@ fn setup_with_float() -> (Setup, Address, Address) {
 fn test_transfer_float_rejects_non_active_recipient() {
     for status in NON_ACTIVE_STATUSES {
         let (s, a, b) = setup_with_float();
-        s.client.set_registry(&Some(mock_registry(&s.env, status)));
+        let reg = mock_registry_with_agent(&s.env, Some(crate::AgentStatus::Active), &b, status);
+        s.client.set_registry(&Some(reg));
         assert_eq!(
             s.client.try_transfer_float(&a, &b, &100),
             Err(Ok(VaultError::AgentNotFound))
         );
+        assert_eq!(s.client.get_vault(&a).float, 300);
+        assert_eq!(s.client.get_vault(&b).float, 300);
+    }
+}
+
+#[test]
+fn test_transfer_float_rejects_non_active_sender() {
+    for status in NON_ACTIVE_STATUSES {
+        let (s, a, b) = setup_with_float();
+        let reg = mock_registry_with_agent(&s.env, Some(crate::AgentStatus::Active), &a, status);
+        s.client.set_registry(&Some(reg));
+        assert_eq!(
+            s.client.try_transfer_float(&a, &b, &100),
+            Err(Ok(VaultError::AgentNotFound))
+        );
+        assert_eq!(s.client.get_vault(&a).float, 300);
         assert_eq!(s.client.get_vault(&b).float, 300);
     }
 }
@@ -652,6 +690,45 @@ fn test_settle_net_rejects_non_active_positive_delta() {
         );
         assert_eq!(s.client.get_vault(&a).float, 300);
         assert_eq!(s.client.get_vault(&b).float, 300);
+    }
+}
+
+#[test]
+fn test_settle_net_allows_non_active_negative_delta() {
+    for status in NON_ACTIVE_STATUSES {
+        let (s, a, b) = setup_with_float();
+        let reg = mock_registry_with_agent(&s.env, Some(crate::AgentStatus::Active), &a, status);
+        s.client.set_registry(&Some(reg));
+        let entries: Vec<(Address, i128)> = vec![&s.env, (a.clone(), -100), (b.clone(), 100)];
+        s.client.settle_net(&entries);
+        assert_eq!(s.client.get_vault(&a).float, 200);
+        assert_eq!(s.client.get_vault(&b).float, 400);
+    }
+}
+
+#[test]
+fn test_burn_float_allows_non_active_agents() {
+    for status in NON_ACTIVE_STATUSES {
+        let (s, a, _b) = setup_with_float();
+        s.client.set_registry(&Some(mock_registry(&s.env, status)));
+        s.client.burn_float(&a, &120);
+        assert_eq!(s.client.get_vault(&a).float, 180);
+    }
+}
+
+#[test]
+fn test_withdraw_collateral_allows_non_active_agents() {
+    for status in NON_ACTIVE_STATUSES {
+        let (s, a, _b) = setup_with_float();
+        s.client.set_registry(&Some(mock_registry(&s.env, status)));
+        // Partial withdraw while float (300) is outstanding stays within the 80% solvency bound.
+        s.client.withdraw_collateral(&a, &500);
+        assert_eq!(s.client.get_vault(&a).collateral, 500);
+        // Full exit after burning remaining float to zero.
+        s.client.burn_float(&a, &300);
+        s.client.withdraw_collateral(&a, &500);
+        assert_eq!(s.client.get_vault(&a).collateral, 0);
+        assert_eq!(s.client.get_vault(&a).float, 0);
     }
 }
 

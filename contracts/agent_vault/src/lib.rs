@@ -475,8 +475,9 @@ impl AgentVault {
         Ok(())
     }
 
-    /// Atomic float transfer between agents. Both must authorise. The
-    /// recipient's float must stay within their own collateral bound.
+    /// Atomic float transfer between agents. Both must authorise and be
+    /// `Active` in the configured `AgentRegistry` (#865). The recipient's
+    /// float must stay within their own collateral bound.
     pub fn transfer_float(
         env: Env,
         from: Address,
@@ -496,6 +497,7 @@ impl AgentVault {
         from.require_auth();
         to.require_auth();
         Self::assert_circuit_ok(&env, Symbol::new(&env, "transfer_float"))?;
+        Self::assert_agent_active(&env, &from)?;
         Self::assert_agent_active(&env, &to)?;
         if amount <= 0 {
             return Err(VaultError::InvalidAmount);

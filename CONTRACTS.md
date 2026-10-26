@@ -48,6 +48,22 @@ The invariant is checked at **every state-mutating operation**:
 | `settle_net`          | Verified for each entry in the batch                 |
 | `set_haircut`         | Verified with new haircut ratio                      |
 
+### Registry Status Gate & Exit Paths (Issues #788, #835, #865)
+
+When an `AgentRegistry` contract is wired into `agent_vault` via `set_registry(Some(registry))`, float expansion and peer-to-peer routing require `AgentStatus::Active`, while liability-reducing unwind paths remain open so non-Active agents and the operator can settle outstanding obligations and recover collateral once `float == 0` (matching `agent_registry::withdraw_bond`, which requires the agent not to be `Active`):
+
+| Operation                             | `Active` | `Pending` | `Suspended` | `Expired` | Unregistered | Rationale                                                                                                      |
+| ------------------------------------- | -------- | --------- | ----------- | --------- | ------------ | -------------------------------------------------------------------------------------------------------------- |
+| `mint_float`                          | Allowed  | Rejected  | Rejected    | Rejected  | Rejected     | Only live, KYC-verified, bonded agents with an unexpired license may be issued new float.                      |
+| `transfer_float` / `transfer_to_agent` (as `to`) | Allowed  | Rejected  | Rejected    | Rejected  | Rejected     | Prevents crediting float to non-Active or unregistered vaults via peer-to-peer transfers.                      |
+| `transfer_float` / `transfer_to_agent` (as `from`) | Allowed  | Rejected  | Rejected    | Rejected  | Rejected     | Peer-to-peer float routing is restricted to `Active` agents; non-Active agents must unwind via burn or settle. |
+| `settle_net` (`delta > 0`)            | Allowed  | Rejected  | Rejected    | Rejected  | Rejected     | Prevents net settlement from expanding float held by non-Active or unregistered agents.                        |
+| `settle_net` (`delta <= 0`)           | Allowed  | Allowed   | Allowed     | Allowed   | Allowed      | Lets the operator net down end-of-day positions for agents that became `Suspended` or `Expired`.               |
+| `burn_float`                          | Allowed  | Allowed   | Allowed     | Allowed   | Allowed      | Always reduces protocol float liability; required so non-Active agents can unwind `float` to `0`.              |
+| `withdraw_collateral`                 | Allowed  | Allowed   | Allowed     | Allowed   | Allowed      | Enforces `min_collateral` and solvency while `float > 0`, and allows full USDC exit once `float == 0`.         |
+
+Rejected status checks return `VaultError::AgentNotFound`.
+
 ### View Functions for Off-Chain Verification
 
 - **`check_invariant(agent)`**: Returns `(holds, float, max_allowed)` for a
