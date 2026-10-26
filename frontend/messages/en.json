@@ -645,7 +645,16 @@
     "vaultAgentKey": "Agent public key",
     "vaultAmount": "Amount",
     "vaultWaiting": "Waiting for wallet…",
-    "vaultBuild": "Build and sign"
+    "vaultBuild": "Build and sign",
+    "vaultCollateral": "Vault Collateral",
+    "vaultFloat": "Issued Float",
+    "vaultMaxFloat": "Max Allowed Float",
+    "vaultHeadroom": "Remaining Headroom",
+    "vaultOperatorCashInTitle": "Operator Cash-In (Mint Float)",
+    "vaultOperatorCashInDesc": "Record a cash-in (mint_float) for a chosen agent, signed with the admin operator wallet.",
+    "vaultInvalidAmount": "Enter a valid positive amount.",
+    "vaultSolvencyViolated": "Solvency violated: requested amount exceeds the vault's collateral haircut limit (max allowed float).",
+    "vaultInsufficientFloat": "Insufficient float: requested amount exceeds the agent's available float balance."
   },
   "Governance": {
     "title": "Governance Console",

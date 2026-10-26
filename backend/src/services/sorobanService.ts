@@ -42,6 +42,48 @@ function transactionNotSuccessful(txHash: string, txStatus: string): AppError {
   });
 }
 
+/**
+ * Maps `agent_vault` contract revert codes (`VaultError`) from Soroban RPC
+ * simulation or submission errors into clear 400 `AppError` responses.
+ */
+export function mapAgentVaultContractError(err: unknown): AppError | null {
+  if (err instanceof AppError) {
+    return err;
+  }
+  const raw = err instanceof Error ? err.message : String(err ?? '');
+  if (/SolvencyViolated|Contract,\s*#8\b/i.test(raw)) {
+    return AppError.badRequest(
+      'SolvencyViolated: requested operation exceeds the vault solvency limit (float cannot exceed max allowed float)',
+      ErrorCode.VALIDATION_ERROR,
+    );
+  }
+  if (/InsufficientFloat|Contract,\s*#7\b/i.test(raw)) {
+    return AppError.badRequest(
+      'InsufficientFloat: requested amount exceeds the agent available float balance',
+      ErrorCode.INSUFFICIENT_BALANCE,
+    );
+  }
+  if (/InsufficientCollateral|Contract,\s*#6\b/i.test(raw)) {
+    return AppError.badRequest(
+      'InsufficientCollateral: requested withdrawal exceeds the agent collateral balance',
+      ErrorCode.INSUFFICIENT_BALANCE,
+    );
+  }
+  if (/MinCollateralViolated|Contract,\s*#11\b/i.test(raw)) {
+    return AppError.badRequest(
+      'MinCollateralViolated: remaining collateral cannot fall below the minimum collateral floor while float is outstanding',
+      ErrorCode.VALIDATION_ERROR,
+    );
+  }
+  if (/AgentNotActive|AgentNotFound|Contract,\s*#(4|15)\b/i.test(raw)) {
+    return AppError.badRequest(
+      'AgentNotFound: agent must be registered and Active in the registry',
+      ErrorCode.VALIDATION_ERROR,
+    );
+  }
+  return null;
+}
+
 class SorobanService {
   private static readonly FALLBACK_CREDIT_SCORE = 500;
   private static readonly SCORE_SIMULATION_RETRY_ATTEMPTS = 2;
@@ -84,7 +126,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     return { unsignedTxXdr, networkPassphrase: passphrase };
@@ -121,7 +170,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     return { unsignedTxXdr, networkPassphrase: passphrase };
@@ -198,7 +254,14 @@ class SorobanService {
       )
       .setTimeout(30)
       .build();
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     if (authorizeOperator) {
       const operatorSecret = env.AGENT_OPERATOR_SECRET?.trim();
       if (!operatorSecret) {
@@ -394,7 +457,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     logger.withContext().info('Built request_loan transaction', {
@@ -463,7 +533,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     logger.withContext().info('Built repay transaction', {
@@ -513,7 +590,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     logger.withContext().info('Built deposit transaction', {
@@ -563,7 +647,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     logger.withContext().info('Built withdraw transaction', {
@@ -613,7 +704,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     logger.info('Built emergency_withdraw transaction', {
@@ -656,7 +754,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     logger.withContext().info('Built approve_loan transaction', {
@@ -699,7 +804,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     logger.withContext().info('Built deposit_collateral transaction', {
@@ -741,7 +853,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     logger.withContext().info('Built release_collateral transaction', {
@@ -786,7 +905,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     logger.withContext().info('Built refinance_loan transaction', {
@@ -834,7 +960,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     logger.withContext().info('Built extend_loan transaction', {
@@ -879,7 +1012,14 @@ class SorobanService {
       .setTimeout(30)
       .build();
 
-    const prepared = await server.prepareTransaction(tx);
+    let prepared: Awaited<ReturnType<typeof server.prepareTransaction>>;
+    try {
+      prepared = await server.prepareTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const unsignedTxXdr = prepared.toXDR();
 
     logger.withContext().info('Built liquidate transaction', {
@@ -1060,7 +1200,14 @@ class SorobanService {
 
     const tx = TransactionBuilder.fromXDR(signedTxXdr, this.getNetworkPassphrase());
 
-    const sendResult = await server.sendTransaction(tx);
+    let sendResult: Awaited<ReturnType<typeof server.sendTransaction>>;
+    try {
+      sendResult = await server.sendTransaction(tx);
+    } catch (err) {
+      const mapped = mapAgentVaultContractError(err);
+      if (mapped) throw mapped;
+      throw err;
+    }
     const txHash = sendResult.hash;
 
     if (!txHash) {
@@ -1073,6 +1220,12 @@ class SorobanService {
     });
 
     if (sendResult.status === 'ERROR' || sendResult.status === 'TRY_AGAIN_LATER') {
+      const errorDetail =
+        (sendResult as unknown as { errorResultXdr?: string }).errorResultXdr ??
+        sendResult.errorResult?.toXDR('base64') ??
+        '';
+      const mapped = mapAgentVaultContractError(errorDetail);
+      if (mapped) throw mapped;
       logger.withContext().warn('Transaction rejected at submission', {
         txHash,
         status: sendResult.status,
@@ -1088,6 +1241,11 @@ class SorobanService {
     });
 
     if (polled.status !== 'SUCCESS') {
+      const resultDetail =
+        (polled as unknown as { error?: string }).error ??
+        ('resultXdr' in polled && polled.resultXdr ? polled.resultXdr.toXDR('base64') : '');
+      const mapped = mapAgentVaultContractError(resultDetail);
+      if (mapped) throw mapped;
       throw transactionNotSuccessful(txHash, polled.status);
     }
 

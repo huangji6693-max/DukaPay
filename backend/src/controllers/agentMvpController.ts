@@ -1,7 +1,8 @@
 import type { Request, Response } from 'express';
 import { StrKey } from '@stellar/stellar-sdk';
-import { stroopsToAmount, toStroops } from '../money/decimal.js';
+import { stroopsToAmount, toStroops, toWholeStroops } from '../money/decimal.js';
 import { sorobanService } from '../services/sorobanService.js';
+import { cacheService } from '../services/cacheService.js';
 import { AppError } from '../errors/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { query } from '../db/connection.js';
@@ -14,7 +15,14 @@ function publicKey(value: unknown, field: string): string {
   return value;
 }
 
-function amount(value: unknown): bigint {
+function amount(value: unknown, amountStroops?: unknown): bigint {
+  if (amountStroops !== undefined && amountStroops !== null && String(amountStroops).trim() !== '') {
+    const rawStroops = String(amountStroops).trim();
+    if (!/^[1-9]\d*$/.test(rawStroops)) {
+      throw AppError.badRequest('amountStroops must be a positive integer stroop amount');
+    }
+    return toWholeStroops(BigInt(rawStroops));
+  }
   if (typeof value !== 'string' && typeof value !== 'number') {
     throw AppError.badRequest('amount is required');
   }
@@ -108,7 +116,7 @@ export const buildAgentVaultAction = (
       source,
       action,
       agent,
-      amount(req.body.amount),
+      amount(req.body.amount, req.body.amountStroops),
     );
     res.json({ success: true, ...result });
   });
@@ -171,5 +179,8 @@ export const submitAgentTransaction = asyncHandler(async (req: Request, res: Res
     throw AppError.badRequest('signedTxXdr is required');
   }
   const result = await sorobanService.submitSignedTx(signedTxXdr);
+  if (req.user?.publicKey) {
+    await cacheService.delete(`agent:dashboard:${req.user.publicKey}`).catch(() => {});
+  }
   res.json({ success: true, ...result });
 });

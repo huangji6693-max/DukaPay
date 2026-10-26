@@ -2,11 +2,19 @@ import type { Request, Response } from 'express';
 import { query } from '../db/connection.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { cacheService } from '../services/cacheService.js';
-import { stroopsToAmount } from '../money/decimal.js';
+import { stroopsToAmount, toWholeStroops } from '../money/decimal.js';
 import { isMoneyEvent } from '../money/eventAmounts.js';
 
 interface AgentDashboardData {
   agentPublicKey: string;
+  vault: {
+    collateralStroops: string;
+    floatStroops: string;
+    maxFloatStroops: string;
+    headroomStroops: string;
+    haircutBps: number;
+    isActive: boolean;
+  };
   floatUtilization: {
     totalFloat: number;
     allocated: number;
@@ -71,6 +79,7 @@ export const getAgentDashboard = asyncHandler(async (req: Request, res: Response
     settlementsResult,
     collateralResult,
     transactionsResult,
+    vaultResult,
   ] = await Promise.all([
     // Float utilization: total deposits allocated vs pool size
     query(
@@ -145,13 +154,33 @@ export const getAgentDashboard = asyncHandler(async (req: Request, res: Response
        LIMIT 20`,
       [agentPublicKey],
     ),
+    // Agent vault projection (collateral, float, haircut_bps)
+    query(
+      `SELECT collateral_balance, float_balance, haircut_bps, is_active
+       FROM agent_vaults
+       WHERE agent_address = $1`,
+      [agentPublicKey],
+    ).catch(() => ({ rows: [] })),
   ]);
 
-  const floatRow = floatResult.rows[0] as Record<string, unknown>;
-  const earningsRow = earningsResult.rows[0] as Record<string, unknown>;
+  const floatRow = (floatResult.rows[0] ?? {}) as Record<string, unknown>;
+  const earningsRow = (earningsResult.rows[0] ?? {}) as Record<string, unknown>;
   const portfolioRow = portfolioResult.rows[0] as Record<string, unknown> | undefined;
-  const settlementsRow = settlementsResult.rows[0] as Record<string, unknown>;
-  const collateralRow = collateralResult.rows[0] as Record<string, unknown>;
+  const settlementsRow = (settlementsResult.rows[0] ?? {}) as Record<string, unknown>;
+  const collateralRow = (collateralResult.rows[0] ?? {}) as Record<string, unknown>;
+  const vaultRow = (vaultResult.rows[0] ?? {}) as Record<string, unknown>;
+
+  const collateralStroops = toWholeStroops(
+    vaultRow.collateral_balance != null ? BigInt(String(vaultRow.collateral_balance)) : 0n,
+  );
+  const floatStroops = toWholeStroops(
+    vaultRow.float_balance != null ? BigInt(String(vaultRow.float_balance)) : 0n,
+  );
+  const rawHaircutBps = Number(vaultRow.haircut_bps ?? 0);
+  const effectiveHaircutBps =
+    rawHaircutBps > 0 ? BigInt(rawHaircutBps) : collateralStroops > 0n ? 8000n : 0n;
+  const maxFloatStroops = (collateralStroops * effectiveHaircutBps) / 10_000n;
+  const headroomStroops = maxFloatStroops > floatStroops ? maxFloatStroops - floatStroops : 0n;
 
   // contract_events amounts are stroops; the API returns whole tokens.
   const totalFloat = stroopsToAmount(floatRow.total_float as string | number | null);
@@ -165,6 +194,14 @@ export const getAgentDashboard = asyncHandler(async (req: Request, res: Response
 
   const dashboardData: AgentDashboardData = {
     agentPublicKey,
+    vault: {
+      collateralStroops: collateralStroops.toString(),
+      floatStroops: floatStroops.toString(),
+      maxFloatStroops: maxFloatStroops.toString(),
+      headroomStroops: headroomStroops.toString(),
+      haircutBps: Number(effectiveHaircutBps),
+      isActive: Boolean(vaultRow.is_active),
+    },
     floatUtilization: {
       totalFloat,
       allocated,

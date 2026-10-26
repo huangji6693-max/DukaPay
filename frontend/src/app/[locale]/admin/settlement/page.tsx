@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { useUserStore } from "../../../stores/useUserStore";
 import { useTriggerSettlement } from "../../../hooks/useApi";
+import { AgentVaultActions } from "../../../components/agent/AgentVaultActions";
 
 export default function AdminSettlementPage() {
   const t = useTranslations("AdminSettlement");
@@ -99,6 +100,8 @@ export default function AdminSettlementPage() {
           )}
         </section>
       )}
+
+      <AgentVaultActions mode="operator" />
     </div>
   );
 }

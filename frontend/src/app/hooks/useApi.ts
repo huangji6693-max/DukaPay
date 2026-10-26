@@ -2292,8 +2292,18 @@ export function useReleaseCollateral() {
 
 /* ─── Agent Dashboard ────────────────────────────────────────────────── */
 
+export interface AgentVaultSummary {
+  collateralStroops: string;
+  floatStroops: string;
+  maxFloatStroops: string;
+  headroomStroops: string;
+  haircutBps: number;
+  isActive: boolean;
+}
+
 export interface AgentDashboardData {
   agentPublicKey: string;
+  vault?: AgentVaultSummary;
   floatUtilization: {
     totalFloat: number;
     allocated: number;

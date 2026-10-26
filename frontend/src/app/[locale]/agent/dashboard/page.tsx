@@ -1,11 +1,22 @@
 "use client";
 
-import { useTranslations } from "next-intl";
-import { useLocale } from "next-intl";
+import { useTranslations, useLocale } from "next-intl";
 import { useUserStore } from "../../../stores/useUserStore";
-import { useAgentDashboard } from "../../../hooks/useApi";
+import { clearAgentDashboardCache, useAgentDashboard } from "../../../hooks/useApi";
+import { useSSE } from "../../../hooks/useSSE";
+import { NEXT_PUBLIC_API_URL } from "../../../lib/apiConfig";
 import { formatCurrency } from "../../../utils/formatLocale";
 import { AgentVaultActions } from "../../../components/agent/AgentVaultActions";
+
+const VAULT_SSE_EVENTS = new Set([
+  "CollateralDeposited",
+  "CollateralWithdrawn",
+  "FloatMinted",
+  "FloatBurned",
+  "FloatTransferred",
+  "VaultSettled",
+  "HaircutUpdated",
+]);
 
 function formatPercent(value: number): string {
   return `${value.toFixed(2)}%`;
@@ -21,6 +32,20 @@ export default function AgentDashboardPage() {
   const locale = useLocale();
   const role = useUserStore((state) => state.user?.role);
   const { data, isLoading, isError, refetch } = useAgentDashboard();
+
+  useSSE<{ eventType?: string; type?: string }>({
+    url: `${NEXT_PUBLIC_API_URL}/api/events/stream`,
+    onMessage: (event) => {
+      const eventType = event.eventType ?? event.type ?? "";
+      if (VAULT_SSE_EVENTS.has(eventType)) {
+        void clearAgentDashboardCache()
+          .catch(() => {})
+          .finally(() => {
+            void refetch();
+          });
+      }
+    },
+  });
 
   if (role && (role === "borrower" || role === "lender")) {
     return (
@@ -165,7 +190,7 @@ export default function AgentDashboardPage() {
             </button>
             <span className="text-xs text-zinc-400">{t("autoRefresh")}: 10s</span>
           </section>
-          <AgentVaultActions />
+          <AgentVaultActions vault={data.vault} onActionSuccess={() => refetch()} />
         </>
       )}
     </div>
