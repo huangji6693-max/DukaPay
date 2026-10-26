@@ -171,3 +171,10 @@ export const scoreReadRateLimiter = createReadRateLimiter({
   max: 60,
   message: 'Too many score requests, please try again later.',
 });
+
+/** Public agent solvency reads (60/min per IP or wallet). */
+export const publicSolvencyRateLimiter = createReadRateLimiter({
+  max: 60,
+  message: 'Too many solvency requests, please try again later.',
+});
+

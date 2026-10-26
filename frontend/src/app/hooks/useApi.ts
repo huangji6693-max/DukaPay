@@ -117,6 +117,7 @@ export const queryKeys = {
   },
   agent: {
     dashboard: () => ["agent", "dashboard"] as const,
+    solvency: () => ["agent", "solvency"] as const,
   },
 } as const;
 
@@ -2342,3 +2343,42 @@ export async function clearAgentDashboardCache() {
     method: "DELETE",
   });
 }
+
+/* ─── Public Agent Solvency ──────────────────────────────────────────── */
+
+export interface PublicSolvencyAgent {
+  agentPublicKey: string;
+  collateral: number;
+  float: number;
+  maxAllowed: number;
+  collateralStroops?: string;
+  floatStroops?: string;
+  maxAllowedStroops?: string;
+  holds: boolean;
+}
+
+export interface PublicSolvencyTotals {
+  collateral: number;
+  float: number;
+  maxAllowed: number;
+  collateralStroops?: string;
+  floatStroops?: string;
+  maxAllowedStroops?: string;
+  holds: boolean;
+}
+
+export interface PublicSolvencyResponse {
+  success: boolean;
+  source: string;
+  agents: PublicSolvencyAgent[];
+  totals: PublicSolvencyTotals;
+}
+
+export function usePublicSolvency() {
+  return useQuery({
+    queryKey: queryKeys.agent.solvency(),
+    queryFn: () => apiFetch<PublicSolvencyResponse>("/agents/solvency"),
+    staleTime: 15_000,
+  });
+}
+

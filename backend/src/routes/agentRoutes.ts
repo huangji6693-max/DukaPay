@@ -28,6 +28,7 @@ import {
   getPublicSolvency,
   submitAgentTransaction,
 } from '../controllers/agentMvpController.js';
+import { publicSolvencyRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = Router();
 
@@ -41,7 +42,7 @@ const router = Router();
  *       200:
  *         description: Solvency projection
  */
-router.get('/solvency', getPublicSolvency);
+router.get('/solvency', publicSolvencyRateLimiter, getPublicSolvency);
 
 /**
  * @swagger

@@ -310,6 +310,84 @@ class SorobanService {
     );
   }
 
+  /**
+   * Simulates `check_invariants(agents)` on `agent_vault` for the given active
+   * agent addresses and returns per-agent `(holds, float, max_allowed)` in stroops.
+   */
+  async simulateAgentVaultInvariants(agentAddresses: string[]): Promise<
+    Array<{
+      agentPublicKey: string;
+      holds: boolean;
+      floatStroops: bigint;
+      maxAllowedStroops: bigint;
+    }>
+  > {
+    if (agentAddresses.length === 0) {
+      return [];
+    }
+
+    const server = this.getRpcServer();
+    const contractId = this.getAgentVaultContractId();
+    const passphrase = this.getNetworkPassphrase();
+    const source = this.getScoreReadSourceKeypair();
+
+    const account = await server.getAccount(source.publicKey());
+    const agentsScVal = xdr.ScVal.scvVec(
+      agentAddresses.map((addr) => nativeToScVal(Address.fromString(addr), { type: 'address' })),
+    );
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: passphrase,
+    })
+      .addOperation(
+        Operation.invokeContractFunction({
+          contract: contractId,
+          function: 'check_invariants',
+          args: [agentsScVal],
+        }),
+      )
+      .setTimeout(30)
+      .build();
+
+    const simulation = await server.simulateTransaction(tx);
+    if ('error' in simulation) {
+      throw AppError.internal(
+        `Failed to simulate check_invariants: ${String(simulation.error ?? '')}`,
+      );
+    }
+
+    const retval = simulation.result?.retval;
+    if (!retval) {
+      return [];
+    }
+
+    const native = scValToNative(retval);
+    if (!Array.isArray(native)) {
+      return [];
+    }
+
+    return native.map((entry: unknown) => {
+      if (Array.isArray(entry)) {
+        return {
+          agentPublicKey: String(entry[0] ?? ''),
+          holds: Boolean(entry[1]),
+          floatStroops: BigInt(String(entry[2] ?? 0)),
+          maxAllowedStroops: BigInt(String(entry[3] ?? 0)),
+        };
+      }
+      const record = (entry ?? {}) as Record<string, unknown>;
+      return {
+        agentPublicKey: String(record.agentPublicKey ?? record.agent ?? ''),
+        holds: Boolean(record.holds),
+        floatStroops: BigInt(String(record.floatStroops ?? record.float ?? 0)),
+        maxAllowedStroops: BigInt(
+          String(record.maxAllowedStroops ?? record.max_allowed ?? record.maxAllowed ?? 0),
+        ),
+      };
+    });
+  }
+
   private getScoreReadSourceKeypair(): Keypair {
     const secret = env.SCORE_RECONCILIATION_SOURCE_SECRET ?? env.LOAN_MANAGER_ADMIN_SECRET;
 

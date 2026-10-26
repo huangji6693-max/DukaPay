@@ -13,6 +13,7 @@ import {
   Networks,
   StrKey,
   TransactionBuilder,
+  nativeToScVal,
   xdr,
 } from '@stellar/stellar-sdk';
 
@@ -26,7 +27,9 @@ process.env.ADMIN_WALLETS = `${OPERATOR.publicKey()},${OTHER_ADMIN}`;
 process.env.AGENT_WALLETS = AGENT;
 process.env.AGENT_OPERATOR_PUBLIC_KEY = OPERATOR.publicKey();
 process.env.AGENT_OPERATOR_SECRET = OPERATOR.secret();
+process.env.SCORE_RECONCILIATION_SOURCE_SECRET = OPERATOR.secret();
 process.env.AGENT_REGISTRY_CONTRACT_ID = StrKey.encodeContract(Buffer.alloc(32, 7));
+process.env.AGENT_VAULT_CONTRACT_ID = StrKey.encodeContract(Buffer.alloc(32, 8));
 
 function addressAuth(publicKey: string): xdr.SorobanAuthorizationEntry {
   return new xdr.SorobanAuthorizationEntry({
@@ -53,11 +56,18 @@ function addressAuth(publicKey: string): xdr.SorobanAuthorizationEntry {
   });
 }
 
+const mockSimulateTransaction = jest.fn<() => Promise<unknown>>();
+const mockQuery = jest.fn<() => Promise<{ rows: unknown[]; rowCount: number }>>(async () => ({
+  rows: [],
+  rowCount: 0,
+}));
+
 // Stand-in for simulation: attach the auth entries the registry asks for.
 jest.unstable_mockModule('../config/stellar.js', () => ({
   createSorobanRpcServer: () => ({
     getAccount: async (key: string) => new Account(key, '1'),
     getLatestLedger: async () => ({ sequence: 100 }),
+    simulateTransaction: mockSimulateTransaction,
     prepareTransaction: async (tx: { toEnvelope: () => xdr.TransactionEnvelope }) => {
       const envelope = tx.toEnvelope();
       envelope
@@ -75,10 +85,12 @@ jest.unstable_mockModule('../config/stellar.js', () => ({
 }));
 
 jest.unstable_mockModule('../db/connection.js', () => ({
-  query: jest.fn(async () => ({ rows: [], rowCount: 0 })),
+  query: mockQuery,
 }));
 
 const { default: agentRoutes } = await import('../routes/agentRoutes.js');
+const { PUBLIC_SOLVENCY_CACHE_KEY } = await import('../controllers/agentMvpController.js');
+const { cacheService } = await import('../services/cacheService.js');
 const { errorHandler } = await import('../middleware/errorHandler.js');
 const { generateJwtToken } = await import('../services/authService.js');
 
@@ -130,5 +142,132 @@ describe('POST /api/agents/register', () => {
 
     expect(signature(auth[0])).not.toBe(xdr.ScValType.scvVoid());
     expect(signature(auth[1])).toBe(xdr.ScValType.scvVoid());
+  });
+});
+
+function buildInvariantsRetval(
+  entries: Array<{ agent: string; holds: boolean; float: bigint; maxAllowed: bigint }>,
+): xdr.ScVal {
+  return xdr.ScVal.scvVec(
+    entries.map((entry) =>
+      xdr.ScVal.scvVec([
+        nativeToScVal(Address.fromString(entry.agent), { type: 'address' }),
+        xdr.ScVal.scvBool(entry.holds),
+        nativeToScVal(entry.float, { type: 'i128' }),
+        nativeToScVal(entry.maxAllowed, { type: 'i128' }),
+      ]),
+    ),
+  );
+}
+
+describe('GET /api/agents/solvency', () => {
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    await cacheService.delete(PUBLIC_SOLVENCY_CACHE_KEY);
+  });
+
+  it('returns empty agents and holds=true when there are no active agents', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    const res = await request(buildApp()).get('/api/agents/solvency');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      success: true,
+      source: 'contract-simulation',
+      agents: [],
+      totals: {
+        collateral: 0,
+        float: 0,
+        maxAllowed: 0,
+        holds: true,
+      },
+    });
+    expect(mockSimulateTransaction).not.toHaveBeenCalled();
+  });
+
+  it('simulates check_invariants on agent_vault and reports holds=true when invariant holds', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ agent_address: AGENT, collateral_balance: '1000000000' }],
+      rowCount: 1,
+    });
+    mockSimulateTransaction.mockResolvedValueOnce({
+      result: {
+        retval: buildInvariantsRetval([
+          {
+            agent: AGENT,
+            holds: true,
+            float: 500_000_000n,
+            maxAllowed: 800_000_000n,
+          },
+        ]),
+      },
+    });
+
+    const res = await request(buildApp()).get('/api/agents/solvency');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      success: true,
+      source: 'contract-simulation',
+      agents: [
+        {
+          agentPublicKey: AGENT,
+          collateral: 100,
+          float: 50,
+          maxAllowed: 80,
+          holds: true,
+        },
+      ],
+      totals: {
+        collateral: 100,
+        float: 50,
+        maxAllowed: 80,
+        holds: true,
+      },
+    });
+    expect(mockSimulateTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports holds=false on the agent and network totals when an invariant is violated', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ agent_address: AGENT, collateral_balance: '1000000000' }],
+      rowCount: 1,
+    });
+    mockSimulateTransaction.mockResolvedValueOnce({
+      result: {
+        retval: buildInvariantsRetval([
+          {
+            agent: AGENT,
+            holds: false,
+            float: 900_000_000n,
+            maxAllowed: 800_000_000n,
+          },
+        ]),
+      },
+    });
+
+    const res = await request(buildApp()).get('/api/agents/solvency');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      success: true,
+      source: 'contract-simulation',
+      agents: [
+        {
+          agentPublicKey: AGENT,
+          collateral: 100,
+          float: 90,
+          maxAllowed: 80,
+          holds: false,
+        },
+      ],
+      totals: {
+        collateral: 100,
+        float: 90,
+        maxAllowed: 80,
+        holds: false,
+      },
+    });
   });
 });
